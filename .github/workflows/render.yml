@@ -83,7 +83,7 @@ jobs:
       - name: Install
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng
-          pip install numpy scipy pillow piper-tts
+          pip install numpy scipy pillow piper-tts faster-whisper
           if [ "${{ steps.plan.outputs.words }}" = "true" ]; then
             pip install torch --index-url https://download.pytorch.org/whl/cpu
             pip install "kokoro>=0.9.4" soundfile "misaki[zh]"
