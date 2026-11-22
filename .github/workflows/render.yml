@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "slot — ролики/уроки по расписанию; control — команда бота"
+        description: "slot — ролики/уроки по расписанию; control — команда бота; prerender — утренняя заготовка"
         default: "slot"
       action:
         description: "для control: publish | preview"
@@ -67,7 +67,9 @@ jobs:
         env:
           CHECK_HOUR: "true"
         run: |
-          if [ "${{ inputs.job }}" = "slot" ]; then
+          if [ "${{ inputs.job }}" = "prerender" ]; then
+            echo "prerender"
+          elif [ "${{ inputs.job }}" = "slot" ]; then
             python post_quiz.py --plan
           elif echo '${{ inputs.args }}' | grep -q '"words"'; then
             echo "words=true" >> $GITHUB_OUTPUT
@@ -91,7 +93,9 @@ jobs:
           python tools/progress.py step 1 done || true
       - name: Render and publish
         run: |
-          if [ "${{ inputs.job }}" = "slot" ]; then
+          if [ "${{ inputs.job }}" = "prerender" ]; then
+            python tools/prerender.py
+          elif [ "${{ inputs.job }}" = "slot" ]; then
             VIDEO_ONLY=1 CHECK_HOUR=true python post_quiz.py
           else
             python tools/control.py "${{ inputs.action }}" "$IN_ARGS"
