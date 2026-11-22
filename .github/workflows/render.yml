@@ -1,0 +1,113 @@
+name: Render
+
+# Сборка роликов и уроков для каналов «… за минуту». Репозиторий публичный — минуты GitHub Actions не ограничены.
+# Код и контент берутся из приватного language-quiz-bot (токен BOT_REPO_TOKEN), отметки сохраняются туда же.
+run-name: "Render ${{ inputs.job }} ${{ inputs.action }} p${{ inputs.progress }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "slot — ролики/уроки по расписанию; control — команда бота"
+        default: "slot"
+      action:
+        description: "для control: publish | preview"
+        default: ""
+      args:
+        description: "Параметры в JSON"
+        default: "{}"
+      progress:
+        description: "Номер сообщения-прогресса в Telegram"
+        default: ""
+
+concurrency:
+  group: render
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      IN_RENDER: "1"
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+      TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+      TELEGRAM_CHANNEL_DE: ${{ secrets.TELEGRAM_CHANNEL_DE }}
+      TELEGRAM_CHANNEL_EN: ${{ secrets.TELEGRAM_CHANNEL_EN }}
+      TELEGRAM_CHANNEL_ES: ${{ secrets.TELEGRAM_CHANNEL_ES }}
+      TELEGRAM_CHANNEL_ZH: ${{ secrets.TELEGRAM_CHANNEL_ZH }}
+      BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+      BUFFER_API_KEY_2: ${{ secrets.BUFFER_API_KEY_2 }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+      VIDEO_REPO: ${{ github.repository }}
+      VIDEO_REPO_TOKEN: ${{ github.token }}
+      PROGRESS_MSG: ${{ inputs.progress }}
+      IN_ACTION: ${{ inputs.action }}
+      IN_ARGS: ${{ inputs.args }}
+    steps:
+      - name: Get bot code and content (private repo)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/language-quiz-bot
+          token: ${{ secrets.BOT_REPO_TOKEN }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Progress — start
+        if: inputs.progress != ''
+        run: python tools/progress.py init control || true
+      - name: Plan
+        id: plan
+        env:
+          CHECK_HOUR: "true"
+        run: |
+          if [ "${{ inputs.job }}" = "slot" ]; then
+            python post_quiz.py --plan
+          elif echo '${{ inputs.args }}' | grep -q '"words"'; then
+            echo "words=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Cache voices and models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/quiz-voices
+            ~/.cache/pip
+            ~/.cache/huggingface
+          key: render-v1
+      - name: Install
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng
+          pip install numpy scipy pillow piper-tts
+          if [ "${{ steps.plan.outputs.words }}" = "true" ]; then
+            pip install torch --index-url https://download.pytorch.org/whl/cpu
+            pip install "kokoro>=0.9.4" soundfile "misaki[zh]"
+          fi
+          python tools/progress.py step 1 done || true
+      - name: Render and publish
+        run: |
+          if [ "${{ inputs.job }}" = "slot" ]; then
+            VIDEO_ONLY=1 CHECK_HOUR=true python post_quiz.py
+          else
+            python tools/control.py "${{ inputs.action }}" "$IN_ARGS"
+          fi
+      - name: Save to bot repo
+        if: always()
+        run: |
+          bash tools/save.sh "Render: ${{ inputs.job }} ${{ inputs.action }}" channels lessons schedule_state.json status.json music_state.json stats_history.json
+      - name: Progress — failed
+        if: (failure() || cancelled()) && inputs.progress != ''
+        run: python tools/progress.py fail || true
+      - name: Notify on failure
+        if: failure() || cancelled()
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "${{ inputs.job }}" = "slot" ]; then IN_ACTION=publish; fi
+          python tools/fail_notify.py control || true
